@@ -3,10 +3,12 @@ from tqdm import tqdm
 import math
 import numpy as np
 import pandas as pd
+import seaborn as sns
 import statistics
 import re
 import matplotlib.pyplot as plt
 import os
+import itertools
 
 
 def process_raw_results(csv_path):
@@ -239,26 +241,31 @@ if __name__ == "__main__":
         paths = [f'base_SH_UCT/{game}/{budget}/raw_results.csv' for budget in budgets]
         make_results_dataframe_csv(paths, game, budgets)
     
-    for game in games:
-        csv_path1 =  os.path.join(os.getcwd(), f'{game}_SHUCT_SHUCTAnyTime_results_dataframe.csv')
-        agent1_name = "SHUCTAnyTime"
-                
-        csv_path2 = os.path.join(os.getcwd(), f'{game}_Example UCT_SHUCT_results_dataframe.csv')
-        agent2_name = "Example UCT"
-
-        opp = "SHUCT"
-        make_doubleplot_plot(csv_path1, csv_path2, agent1_name, agent2_name, opp, game)
+#    for game in games:
+#        csv_path1 =  os.path.join(os.getcwd(), f'{game}_SHUCT_SHUCTAnyTime_results_dataframe.csv')
+#        agent1_name = "SHUCTAnyTime"
+#                
+#        csv_path2 = os.path.join(os.getcwd(), f'{game}_Example UCT_SHUCT_results_dataframe.csv')
+#        agent2_name = "Example UCT"
+#
+#        opp = "SHUCT"
+#        make_doubleplot_plot(csv_path1, csv_path2, agent1_name, agent2_name, opp, game)
+#        
+#    for game in games:
+#        csv_path1 =  os.path.join(os.getcwd(), f'{game}_Example UCT_SHUCTAnyTime_results_dataframe.csv')
+#        agent1_name = "SHUCTAnyTime"
+#                
+#        csv_path2 = os.path.join(os.getcwd(), f'{game}_Example UCT_SHUCT_results_dataframe.csv')
+#        agent2_name = "SHUCT"
+#
+#        opp = "Example UCT"
+#        make_doubleplot_plot(csv_path1, csv_path2, agent1_name, agent2_name, opp, game)
         
-    for game in games:
-        csv_path1 =  os.path.join(os.getcwd(), f'{game}_Example UCT_SHUCTAnyTime_results_dataframe.csv')
-        agent1_name = "SHUCTAnyTime"
-                
-        csv_path2 = os.path.join(os.getcwd(), f'{game}_Example UCT_SHUCT_results_dataframe.csv')
-        agent2_name = "SHUCT"
-
-        opp = "Example UCT"
-        make_doubleplot_plot(csv_path1, csv_path2, agent1_name, agent2_name, opp, game)
-        
+    win_percentage_sums_shuct_against_uct = np.asarray([0.0 for _ in budgets])
+    win_percentage_sums_anytime_against_uct = np.asarray([0.0 for _ in budgets])
+    win_percentage_sums_uct_against_shuct = np.asarray([0.0 for _ in budgets])
+    win_percentage_sums_anytime_against_shuct = np.asarray([0.0 for _ in budgets])
+    
     # Print the big table
     nice_game_names = {game: game for game in games}
     nice_game_names["AtariGo"] = r"Atari Go (9$\times$9)"
@@ -295,9 +302,13 @@ if __name__ == "__main__":
         conf_strings = [f"{conf:.2f}$" for conf in df_uct_shuct[f'SHUCT_Confidence']]
         print(r"\hspace{3mm}H-MCTS & " + " & ".join([mean_strings[i] + r" \pm " + conf_strings[i] for i in range(len(mean_strings))]) + r" \\")
         
+        win_percentage_sums_shuct_against_uct += np.asarray([mean for mean in df_uct_shuct[f'SHUCT_Mean']])
+        
         mean_strings = [f"${mean:.2f}" for mean in df_uct_anytime[f'SHUCTAnyTime_Mean']]
         conf_strings = [f"{conf:.2f}$" for conf in df_uct_anytime[f'SHUCTAnyTime_Confidence']]
         print(r"\hspace{3mm}Anytime SH & " + " & ".join([mean_strings[i] + r" \pm " + conf_strings[i] for i in range(len(mean_strings))]) + r" \\")
+        
+        win_percentage_sums_anytime_against_uct += np.asarray([mean for mean in df_uct_anytime[f'SHUCTAnyTime_Mean']])
     
     print(r"\midrule")
     print(r"& \multicolumn{7}{c}{Win percentages \textbf{against H-MCTS} (95\% Agresti-Coull confidence intervals)} \\")
@@ -322,15 +333,131 @@ if __name__ == "__main__":
         conf_strings = [f"{conf:.2f}$" for conf in df_uct_shuct[f'Example UCT_Confidence']]
         print(r"\hspace{3mm}UCT & " + " & ".join([mean_strings[i] + r" \pm " + conf_strings[i] for i in range(len(mean_strings))]) + r" \\")
         
+        win_percentage_sums_uct_against_shuct += np.asarray([mean for mean in df_uct_shuct[f'Example UCT_Mean']])
+        
         mean_strings = [f"${mean:.2f}" for mean in df_anytime_shuct[f'SHUCTAnyTime_Mean']]
         conf_strings = [f"{conf:.2f}$" for conf in df_anytime_shuct[f'SHUCTAnyTime_Confidence']]
         print(r"\hspace{3mm}Anytime SH & " + " & ".join([mean_strings[i] + r" \pm " + conf_strings[i] for i in range(len(mean_strings))]) + r" \\")
+        
+        win_percentage_sums_anytime_against_shuct += np.asarray([mean for mean in df_anytime_shuct[f'SHUCTAnyTime_Mean']])
     
     print(r"\bottomrule")
     print(r"\end{tabular}}")
     print(r"\label{Table:GameResults}")
     print(r"\end{table}")
-        
+    
+    # Compute 95% Agresti-Coull confidence intervals for plots averaging over all games
+    num_trials = 150 * len(games)
+    z = 1.96
+    n_tilde = num_trials + z*z
+    
+    confs_anytime_vs_uct = np.asarray([0.0 for _ in budgets])
+    confs_shuct_vs_uct = np.asarray([0.0 for _ in budgets])
+    confs_anytime_vs_shuct = np.asarray([0.0 for _ in budgets])
+    confs_uct_vs_shuct = np.asarray([0.0 for _ in budgets])
+    
+    array_pairs = [
+        (win_percentage_sums_anytime_against_uct, confs_anytime_vs_uct), 
+        (win_percentage_sums_shuct_against_uct, confs_shuct_vs_uct), 
+        (win_percentage_sums_anytime_against_shuct, confs_anytime_vs_shuct), 
+        (win_percentage_sums_uct_against_shuct, confs_uct_vs_shuct),
+    ]
+    
+    for array_pair in array_pairs:
+        win_percentages = array_pair[0] / len(games)
+        for i in range(len(budgets)):
+            num_successes = win_percentages[i]
+            p_tilde = (1.0 / n_tilde) * (num_successes + ((z*z) / 2.0))
+            conf = z * math.sqrt((p_tilde / n_tilde) * (1 - p_tilde))
+            array_pair[1][i] = conf
+    
+    # Plot averaged over all games, against UCT
+    palette = itertools.cycle(sns.color_palette('colorblind'))
+    params = {'text.usetex': True,
+              'text.latex.preamble': r"\usepackage{amsmath}",
+              'figure.dpi': 200,
+              'font.serif': [],
+              'font.sans-serif': [],
+              'font.monospace': [],
+              'font.family': 'serif'}
+    #print(plt.rcParams.keys())
+    plt.rcParams.update(params)
+    sns.set()
+    sns.set_context("paper")
+    sns.set_style("whitegrid")
+    
+    fig, ax = plt.subplots(figsize=(3, 2))
+    
+    color = next(palette)
+    ax.plot(budgets, (win_percentage_sums_anytime_against_uct / len(games)), label="Anytime SH", color=color, marker='o')
+    ax.fill_between(
+        budgets, 
+        (win_percentage_sums_anytime_against_uct / len(games)) + confs_anytime_vs_uct,
+        (win_percentage_sums_anytime_against_uct / len(games)) - confs_anytime_vs_uct,
+        alpha=0.3,
+        edgecolor=color,
+        facecolor=color
+    )
+    
+    color = next(palette)
+    ax.plot(budgets, (win_percentage_sums_shuct_against_uct / len(games)), label="H-MCTS", color=color, marker='o')
+    ax.fill_between(
+        budgets, 
+        (win_percentage_sums_shuct_against_uct / len(games)) + confs_shuct_vs_uct,
+        (win_percentage_sums_shuct_against_uct / len(games)) - confs_shuct_vs_uct,
+        alpha=0.3,
+        edgecolor=color,
+        facecolor=color
+    )
+    
+    ax.set_xlabel("Iteration budget per move", fontsize=6)
+    ax.set_ylabel("Win percentage against UCT", fontsize=6)
+    ax.set_ylim(38, 62)
+    
+    ax.tick_params(axis='both', which='major', labelsize=6)
+    ax.tick_params(axis='both', which='minor', labelsize=6)
+    
+    ax.legend(fontsize=6)
+    
+    fig.tight_layout()
+    
+    # and same, against H-MCTS
+    palette = itertools.cycle(sns.color_palette('colorblind'))
+    fig, ax = plt.subplots(figsize=(3, 2))
+    
+    color = next(palette)
+    ax.plot(budgets, (win_percentage_sums_anytime_against_shuct / len(games)), label="Anytime SH", color=color, marker='o')
+    ax.fill_between(
+        budgets, 
+        (win_percentage_sums_anytime_against_shuct / len(games)) + confs_anytime_vs_shuct,
+        (win_percentage_sums_anytime_against_shuct / len(games)) - confs_anytime_vs_shuct,
+        alpha=0.3,
+        edgecolor=color,
+        facecolor=color
+    )
+    
+    color = next(palette)
+    ax.plot(budgets, (win_percentage_sums_uct_against_shuct / len(games)), label="UCT", color=color, marker='o')
+    ax.fill_between(
+        budgets, 
+        (win_percentage_sums_uct_against_shuct / len(games)) + confs_uct_vs_shuct,
+        (win_percentage_sums_uct_against_shuct / len(games)) - confs_uct_vs_shuct,
+        alpha=0.3,
+        edgecolor=color,
+        facecolor=color
+    )
+    
+    ax.set_xlabel("Iteration budget per move", fontsize=6)
+    ax.set_ylabel("Win percentage against H-MCTS", fontsize=6)
+    ax.set_ylim(38, 62)
+    
+    ax.tick_params(axis='both', which='major', labelsize=6)
+    ax.tick_params(axis='both', which='minor', labelsize=6)
+    
+    ax.legend(fontsize=6)
+    
+    fig.tight_layout()
+    
     plt.show()
 
     
